@@ -1,115 +1,110 @@
 import os
-import img2pdf
-from PyPDF2 import PdfMerger
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from keep_alive import keep_alive
+from PyPDF2 import PdfMerger
+from PIL import Image
+from reportlab.pdfgen import canvas
+from reportlab.lib.pagesizes import A4
 
 user_data = {}
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "👋 Welcome!\n\nCommands:\n"
+        "👋 Welcome to the Lightweight PDF Bot!\n\n"
+        "Commands:\n"
         "/setinsert - Send image for Page 1\n"
-        "/setcover - Send image for thumbnail\n"
-        "/setname <filename.pdf> - Rename final file\n"
-        "\nSend your PDF after setup."
+        "/setcover - Send image for Telegram thumbnail\n"
+        "/setname <filename.pdf> - Set output PDF name\n"
+        "Then send any PDF file to process!"
     )
 
-async def set_insert_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def set_insert(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data.setdefault(update.effective_user.id, {})['waiting_for'] = 'insert'
-    await update.message.reply_text("📸 Send the image to insert as Page 1")
+    await update.message.reply_text("📸 Send image for Page 1")
 
-async def set_cover_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def set_cover(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_data.setdefault(update.effective_user.id, {})['waiting_for'] = 'cover'
-    await update.message.reply_text("📸 Send the image for thumbnail")
-
-async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    waiting = user_data.get(user_id, {}).get("waiting_for")
-
-    photo = await update.message.photo[-1].get_file()
-    file_path = f"{user_id}_{waiting}.jpg"
-    await photo.download_to_drive(file_path)
-    user_data[user_id][waiting] = file_path
-    user_data[user_id]["waiting_for"] = None
-    await update.message.reply_text(f"✅ {waiting.capitalize()} image saved!")
+    await update.message.reply_text("🖼️ Send image for thumbnail")
 
 async def set_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
-        await update.message.reply_text("❌ Use: /setname yourfilename.pdf")
+        await update.message.reply_text("❌ Use like: /setname myfile.pdf")
         return
-    name = " ".join(context.args)
-    if not name.endswith(".pdf"):
-        name += ".pdf"
-    user_data.setdefault(update.effective_user.id, {})["filename"] = name
-    await update.message.reply_text(f"✅ File will be named: {name}")
+    filename = " ".join(context.args)
+    if not filename.endswith(".pdf"):
+        filename += ".pdf"
+    user_data.setdefault(update.effective_user.id, {})['filename'] = filename
+    await update.message.reply_text(f"✅ File name set to: {filename}")
+
+async def handle_photo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    purpose = user_data.setdefault(user_id, {}).get('waiting_for')
+    photo_file = await update.message.photo[-1].get_file()
+    file_path = f"{user_id}_{purpose}.jpg"
+    await photo_file.download_to_drive(file_path)
+    user_data[user_id][purpose] = file_path
+    user_data[user_id]['waiting_for'] = None
+    await update.message.reply_text(f"✅ {purpose.capitalize()} image saved.")
+
+def image_to_pdf(img_path, output_path):
+    img = Image.open(img_path).convert("RGB")
+    img.save(output_path, "PDF", resolution=100.0)
 
 async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     data = user_data.get(user_id, {})
-
-    insert_img = data.get("insert")
-    filename = data.get("filename", "Edited_File.pdf")
+    insert_img = data.get('insert')
+    output_name = data.get('filename', 'Edited_File.pdf')
+    thumbnail = data.get('cover')
 
     if not insert_img:
-        await update.message.reply_text("❌ Use /setinsert to set Page 1 image first")
+        await update.message.reply_text("❌ Use /setinsert first.")
         return
 
-    file = update.message.document
-    if file.file_size > 200 * 1024 * 1024:
-        await update.message.reply_text("❌ File too big! Max 200MB allowed.")
-        return
+    await update.message.reply_text("🔄 Processing PDF...")
 
-    await update.message.reply_text("🔄 Processing...")
+    file = await update.message.document.get_file()
+    await file.download_to_drive("original.pdf")
 
-    try:
-        doc_file = await file.get_file()
-        await doc_file.download_to_drive("original.pdf")
+    # Convert insert image to PDF
+    image_to_pdf(insert_img, "first_page.pdf")
 
-        # Step 1: Convert image to PDF
-        with open("insert_page.pdf", "wb") as f:
-            f.write(img2pdf.convert(insert_img))
+    # Merge using PyPDF2
+    merger = PdfMerger()
+    merger.append("first_page.pdf")
+    merger.append("original.pdf")
+    merger.write(output_name)
+    merger.close()
 
-        # Step 2: Merge image + original PDF
-        merger = PdfMerger()
-        merger.append("insert_page.pdf")
-        merger.append("original.pdf")
-        merger.write(filename)
-        merger.close()
+    # Send PDF
+    with open(output_name, 'rb') as f:
+        if thumbnail and os.path.exists(thumbnail):
+            with open(thumbnail, 'rb') as thumb:
+                await update.message.reply_document(document=f, filename=output_name, thumbnail=thumb)
+        else:
+            await update.message.reply_document(document=f, filename=output_name)
 
-        # Step 3: Send file
-        with open(filename, "rb") as f:
-            if "cover" in data:
-                with open(data["cover"], "rb") as t:
-                    await update.message.reply_document(document=f, filename=filename, thumbnail=t)
-            else:
-                await update.message.reply_document(document=f, filename=filename)
+    # Cleanup
+    for file in ['original.pdf', 'first_page.pdf', output_name]:
+        if os.path.exists(file):
+            os.remove(file)
 
-        # Clean up
-        for file in ["original.pdf", "insert_page.pdf", filename]:
-            if os.path.exists(file):
-                os.remove(file)
-
-    except Exception as e:
-        await update.message.reply_text(f"❌ Error: {e}")
+    await update.message.reply_text("✅ Done!")
 
 def main():
     keep_alive()
-    token = os.getenv("TOKEN")
-    if not token:
-        print("❌ Error: Set TOKEN in .env")
-        return
-
+    token = "YOUR_BOT_TOKEN_HERE"
     app = Application.builder().token(token).build()
+
     app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("setinsert", set_insert_command))
-    app.add_handler(CommandHandler("setcover", set_cover_command))
+    app.add_handler(CommandHandler("setinsert", set_insert))
+    app.add_handler(CommandHandler("setcover", set_cover))
     app.add_handler(CommandHandler("setname", set_name))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
     app.add_handler(MessageHandler(filters.Document.PDF, handle_pdf))
 
-    print("🤖 Bot started.")
+    print("🤖 Bot started")
     app.run_polling()
 
 if __name__ == "__main__":
