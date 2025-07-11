@@ -1,4 +1,4 @@
-import os
+uimport os
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 from keep_alive import keep_alive
@@ -78,13 +78,23 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     merger.close()
 
     # Send PDF
-    with open(output_name, 'rb') as f:
-        if thumbnail and os.path.exists(thumbnail):
-            with open(thumbnail, 'rb') as thumb:
-                await update.message.reply_document(document=f, filename=output_name, thumbnail=thumb)
-        else:
-            await update.message.reply_document(document=f, filename=output_name)
+    import requests
 
+try:
+    with open(output_name, 'rb') as f:
+        res = requests.post("https://file.io", files={"file": f})
+
+    if res.status_code == 200:
+        link = res.json().get("link")
+        await update.message.reply_text(
+            f"✅ PDF processed successfully!\n\n📎 [Download PDF]({link})",
+            parse_mode="Markdown"
+        )
+    else:
+        await update.message.reply_text("❌ Upload failed. Please try again.")
+
+except Exception as e:
+    await update.message.reply_text(f"❌ Error: `{e}`", parse_mode="Markdown")
     # Cleanup
     for file in ['original.pdf', 'first_page.pdf', output_name]:
         if os.path.exists(file):
