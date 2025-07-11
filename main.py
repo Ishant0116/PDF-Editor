@@ -94,7 +94,7 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 def main():
     keep_alive()
-    token = "YOUR_BOT_TOKEN_HERE"
+    token = "8048849948:AAE1tRpgfAOSWW-6c4gN2GEwnw7ADLChYEs"
     app = Application.builder().token(token).build()
 
     app.add_handler(CommandHandler("start", start))
