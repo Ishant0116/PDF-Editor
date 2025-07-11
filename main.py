@@ -78,7 +78,7 @@ async def handle_pdf(update: Update, context: ContextTypes.DEFAULT_TYPE):
     merger.close()
 
     # Send PDF
-    import requests
+     import requests
 
 try:
     with open(output_name, 'rb') as f:
@@ -94,7 +94,8 @@ try:
         await update.message.reply_text("❌ Upload failed. Please try again.")
 
 except Exception as e:
-    await update.message.reply_text(f"❌ Error: `{e}`", parse_mode="Markdown")
+    await update.message.reply_text(f"❌ Error occurred: `{e}`", parse_mode="Markdown")
+
     # Cleanup
     for file in ['original.pdf', 'first_page.pdf', output_name]:
         if os.path.exists(file):
